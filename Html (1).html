@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ระบบจัดตารางเวร ER - รพ.นพรัตนราชธานี</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  body{font-family:'Sarabun',sans-serif;background:linear-gradient(160deg,#fff1f5,#fdf2f8 40%,#fff7fb)}
+  .tab-on{background:#db2777;color:#fff}
+  .sticky-l{position:sticky;left:0;z-index:5;background:#fff}
+  .ovwrap{overflow:auto;max-height:72vh;-webkit-overflow-scrolling:touch}
+  .ovwrap th{position:sticky;top:0;z-index:6;background:#fce7f3}
+  .chip{display:inline-block;min-width:22px;text-align:center;border-radius:4px;padding:1px 3px;font-size:10px;font-weight:700;margin:1px}
+  .navy{background:#1e3a8a;color:#fff}
+  @media print { body{background:#fff} #tabs,.no-print,#hdr{display:none !important} #view{border:none;box-shadow:none} }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="toast" class="hidden"></div>
+
+<div id="login" class="min-h-screen flex items-center justify-center p-4">
+  <div class="bg-white rounded-3xl shadow-xl p-8 w-full max-w-sm text-center border border-pink-100">
+    <div class="text-5xl mb-3">🏥</div>
+    <h1 class="text-2xl font-bold text-pink-700">ระบบจัดตารางเวร ER</h1>
+    <p class="text-slate-500 text-sm mb-6">รพ.นพรัตนราชธานี</p>
+    <input id="pin" type="password" placeholder="รหัสเข้าใช้งาน"
+      class="w-full border border-pink-200 rounded-xl px-4 py-3 text-center tracking-widest mb-3">
+    <button onclick="doLogin()" class="w-full bg-pink-600 text-white rounded-xl py-3 font-semibold">เข้าสู่ระบบ</button>
+    <p id="err" class="text-rose-500 text-sm mt-3 min-h-[20px]"></p>
+  </div>
+</div>
+
+<div id="app" class="hidden max-w-7xl mx-auto p-3 md:p-5">
+  <div id="hdr" class="bg-white rounded-2xl shadow p-4 flex items-center justify-between mb-4 flex-wrap gap-2 border border-pink-100">
+    <div>
+      <h1 class="font-bold text-lg text-pink-700">🏥 ระบบจัดตารางเวร ER</h1>
+      <p class="text-xs text-slate-500">รพ.นพรัตนราชธานี</p>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <span id="whoBox"></span>
+      <span id="badge" class="text-xs px-2 py-1 rounded-full"></span>
+      <button onclick="location.reload()" class="text-slate-400 text-xl px-1">⏻</button>
+    </div>
+  </div>
+  <div id="tabs" class="flex gap-2 mb-4 flex-wrap no-print"></div>
+  <div id="view" class="bg-white rounded-2xl shadow p-4 md:p-6 border border-pink-100"></div>
+</div>
+
+<script>
+/* ================= STORAGE ================= */
+var MEM={};
+var store={
+  get:function(k){ try{return localStorage.getItem(k);}catch(e){return MEM[k]||null;} },
+  set:function(k,v){ try{localStorage.setItem(k,v);}catch(e){MEM[k]=v;} }
+};
+function toast(msg,bad){
+  var t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl shadow-lg text-sm font-semibold '+(bad?'bg-rose-600 text-white':'bg-pink-600 text-white');
+  setTimeout(function(){ t.className='hidden'; },2800);
+}
+
+/* ================= CONFIG ================= */
+var PIN_ADMIN='80106', PIN_MN='MN', PIN_MEMBER='1234';
+
+var POS=[
+ {c:'MN',l:'หัวหน้าเวร',               chip:'navy',                          dot:'#1e3a8a', bgc:'bg-blue-900 text-white'},
+ {c:'LAN',l:'หัวหน้าทีมห้องสังเกตอาการ', chip:'bg-indigo-600 text-white',      dot:'#4f46e5', bgc:'bg-indigo-600 text-white'},
+ {c:'MAN',l:'สมาชิกห้องสังเกตอาการ',    chip:'bg-indigo-200 text-indigo-900', dot:'#a5b4fc', bgc:'bg-indigo-500 text-white'},
+ {c:'EMS',l:'ปฏิบัติงานที่กู้ชีพ',       chip:'bg-cyan-600 text-white',        dot:'#0891b2', bgc:'bg-cyan-600 text-white'},
+ {c:'LR',l:'หัวหน้าทีม Resus',        chip:'bg-red-600 text-white',         dot:'#dc2626', bgc:'bg-red-600 text-white'},
+ {c:'MR',l:'ลูกทีม Resus',             chip:'bg-red-200 text-red-800',       dot:'#fca5a5', bgc:'bg-red-500 text-white'},
+ {c:'LU',l:'หัวหน้าทีม Urgent',       chip:'bg-yellow-400 text-yellow-900', dot:'#facc15', bgc:'bg-amber-500 text-white'},
+ {c:'MU',l:'ลูกทีม Urgent',            chip:'bg-yellow-200 text-yellow-800', dot:'#fde047', bgc:'bg-amber-400 text-amber-950'},
+ {c:'SU',l:'โซนทำแผล',                 chip:'bg-emerald-500 text-white',     dot:'#10b981', bgc:'bg-emerald-600 text-white'},
+ {c:'T', l:'คัดกรอง',                   chip:'bg-orange-500 text-white',      dot:'#f97316', bgc:'bg-orange-500 text-white'},
+ {c:'Vac',l:'พักร้อน',                 chip:'bg-sky-500 text-white',         dot:'#0284c7', bgc:'bg-sky-600 text-white'},
+ {c:'น',  l:'ออกหน่วย',                 chip:'bg-purple-500 text-white',      dot:'#a855f7', bgc:'bg-purple-600 text-white'},
+ {c:'อ',  l:'อบรม/ไปราชการ',           chip:'bg-teal-500 text-white',        dot:'#0d9488', bgc:'bg-teal-600 text-white'}
+];
+var SHIFT=[
+ {c:'M',l:'เช้า',ab:'ช',t:'08.01-16.00',icon:'🌅',bg:'bg-rose-50',   bd:'border-rose-200',   tx:'text-rose-700'},
+ {c:'A',l:'บ่าย',ab:'บ',t:'16.01-23.59',icon:'🌆',bg:'bg-fuchsia-50',bd:'border-fuchsia-200',tx:'text-fuchsia-700'},
+ {c:'N',l:'ดึก', ab:'ด',t:'00.01-08.00',icon:'🌙',bg:'bg-pink-50',   bd:'border-pink-200',   tx:'text-pink-800'}
+];
+var TH_M=['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+var TH_D=['อา','จ','อ','พ','พฤ','ศ','ส'];
+
+function pad(n){ return n<10?'0'+n:''+n; }
+function ymd(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+function thDate(s){ var p=s.split('-'); return (+p[2])+' '+TH_M[(+p[1])-1]+' '+((+p[0])+543); }
+function nameOf(id){ for(var i=0;i<DB.staff.length;i++) if(DB.staff[i].id===id) return DB.staff[i].name; return '-'; }
+function staffOf(id){ for(var i=0;i<DB.staff.length;i++) if(DB.staff[i].id===id) return DB.staff[i]; return null; }
+function posOf(c){ for(var i=0;i<POS.length;i++) if(POS[i].c===c) return POS[i]; return null; }
+function shOf(c){ for(var i=0;i<SHIFT.length;i++) if(SHIFT[i].c===c) return SHIFT[i]; return SHIFT[0]; }
+
+/* ================= DATA ================= */
+function seed(){
+  var names=['สมหญิง','วราภรณ์','ปิยะดา','ณัฐชา','กมลวรรณ','ศิริพร','อรอนงค์','ธนพร','พิมพ์ชนก','รัตนา',
+             'สุนิสา','จารุวรรณ','เบญจมาศ','อารียา','ชุติมา','นภัสสร','ดวงใจ','กานต์ธิดา','มณีรัตน์','ภัทรวดี',
+             'สุภาวดี','ทิพย์สุดา','เกศริน','วิไลวรรณ','อัจฉรา'];
+  var staff=[];
+  var allCaps=POS.map(function(p){ return p.c; });
+  for(var i=0;i<names.length;i++){
+    staff.push({id:i+1,name:names[i],level:'RN',caps:allCaps});
+  }
+  var db={staff:staff, assign:{}, roles:{}, notes:{}, otype:{}, logs:[], missions:[]};
+  var base=new Date(), y=base.getFullYear(), m=base.getMonth();
+  for(var mo=m-1; mo<=m+1; mo++){
+    var last=new Date(y,mo+1,0).getDate();
+    for(var d=1; d<=last; d++){
+      var key=ymd(new Date(y,mo,d));
+      db.assign[key]={M:[],A:[],N:[]};
+      var pool=staff.slice().sort(function(){return Math.random()-0.5;});
+      for(var s=0;s<SHIFT.length;s++){
+        var arr=[];
+        for(var k=0;k<8;k++){ var p=pool.pop(); if(p) arr.push(p.id); }
+        db.assign[key][SHIFT[s].c]=arr;
+      }
+    }
+  }
+  return db;
+}
+var DB;
+try{ DB=JSON.parse(store.get('erdbv11'))||seed(); }catch(e){ DB=seed(); }
+if(!DB||!DB.staff) DB=seed();
+if(!DB.roles) DB.roles={};
+if(!DB.notes) DB.notes={};
+if(!DB.otype) DB.otype={};
+if(!DB.logs) DB.logs=[];
+if(!DB.missions) DB.missions=[];
+function save(){ store.set('erdbv11',JSON.stringify(DB)); }
+save();
+
+function listOf(date,sc){ return ((DB.assign[date]||{})[sc]||[]); }
+function roleOf(date,sc,id){ return ((DB.roles[date]||{})[sc]||{})[id]||''; }
+function setRole(sc,id,val){
+  if(!DB.roles[SEL]) DB.roles[SEL]={};
+  if(!DB.roles[SEL][sc]) DB.roles[SEL][sc]={};
+  if(val) DB.roles[SEL][sc][id]=val; else delete DB.roles[SEL][sc][id];
+  save(); render();
+}
+function otOf(date,sc,id){ return ((DB.otype[date]||{})[sc]||{})[id]||'work'; }
+function setOT(date,sc,id,val){
+  if(!DB.otype[date]) DB.otype[date]={};
+  if(!DB.otype[date][sc]) DB.otype[date][sc]={};
+  DB.otype[date][sc][id]=val;
+  save();
+}
+function noteOf(date,sc){ return ((DB.notes[date]||{})[sc])||''; }
+
+/* ================= STATE ================= */
+var ROLE='member', ME=null, TAB='power', CUR=new Date(), SEL=ymd(new Date()), VIEWID=null, MEMODE='person';
+
+function doLogin(){
+  var v=document.getElementById('pin').value.trim();
+  if(v===PIN_ADMIN) ROLE='admin';
+  else if(v.toUpperCase()===PIN_MN){
+    ROLE='mn';
+    TAB='daily';
+  }
+  else if(v===PIN_MEMBER) ROLE='member';
+  else { document.getElementById('err').textContent='รหัสไม่ถูกต้อง'; return; }
+  
+  ME=DB.staff.length?DB.staff[0].id:null;
+  VIEWID=ME;
+  document.getElementById('login').className='hidden';
+  document.getElementById('app').className='max-w-7xl mx-auto p-3 md:p-5';
+  var b=document.getElementById('badge');
+  b.textContent=(ROLE==='admin'?'ผู้ดูแลระบบ':(ROLE==='mn'?'หัวหน้าเวร':'สมาชิก'));
+  b.className='text-xs px-2 py-1 rounded-full '+(ROLE==='admin'?'bg-amber-100 text-amber-700':(ROLE==='mn'?'navy px-2 py-1 rounded-full text-xs':'bg-pink-100 text-pink-700'));
+  
+  drawWho();
+  render();
+}
+function drawWho(){
+  var box = document.getElementById('whoBox');
+  if(ROLE==='member'){
+    var o='';
+    for(var i=0;i<DB.staff.length;i++) o+='<option value="'+DB.staff[i].id+'"'+(DB.staff[i].id===ME?' selected':'')+'>'+DB.staff[i].name+'</option>';
+    box.innerHTML = '<span class="text-xs text-slate-500 mr-1">ฉันคือ</span><select onchange="setMe(this.value)" class="border border-pink-200 rounded-lg px-2 py-1 text-sm">'+o+'</select>';
+  } else {
+    box.innerHTML = '';
+  }
+}
+function setMe(v){ ME=+v; VIEWID=ME; render(); }
+function canAssign(){ return ROLE==='admin'||ROLE==='mn'; }
+
+function render(){
+  var tabs = [];
+  if(ROLE==='mn'){
+    tabs = [['daily','🧩 ตำแหน่งรายวัน']];
+    TAB = 'daily';
+  } else {
+    tabs=[['power','📊 อัตรากำลัง'],['daily','🧩 ตำแหน่งรายวัน'],['month','🗂 ตารางเวรรายเดือน'],['person','👤 ตารางเวรรายบุคคล']];
+    if(ROLE!=='admin') tabs.push(['swap','🔄 แลกเวร']);
+    tabs.push(['mission','🎯 ภารกิจพิเศษ']);
+    tabs.push(['stat','📈 สถิติการขึ้นเวร']);
+    if(ROLE==='admin') tabs.push(['staff','👥 จัดการบุคลากร']);
+  }
+  var h='';
+  for(var i=0;i<tabs.length;i++)
+    h+='<button onclick="switchTab(\''+tabs[i][0]+'\')" class="px-3 py-2 rounded-xl text-sm font-semibold '+(TAB===tabs[i][0]?'tab-on':'bg-white text-pink-700 shadow-sm border border-pink-100')+'">'+tabs[i][1]+'</button>';
+  document.getElementById('tabs').innerHTML=h;
+  var fn={power:vPower,daily:vDaily,month:vMonth,person:vPerson,swap:vSwap,mission:vMission,stat:vStat,staff:vStaff}[TAB];
+  document.getElementById('view').innerHTML=fn();
+}
+function switchTab(t){ TAB=t; render(); }
+function changeMonth(n){ CUR.setDate(1); CUR.setMonth(CUR.getMonth()+n); render(); }
+function selectDay(d){ SEL=d; TAB='daily'; render(); }
+function setSel(v){ SEL=v; render(); }
+function monthNav(){
+  return '<div class="flex items-center justify-center gap-4 mb-4 no-print">'+
+    '<button onclick="changeMonth(-1)" class="px-3 py-1 bg-pink-100 text-pink-700 rounded-lg font-bold">◀</button>'+
+    '<h2 class="font-bold text-lg text-pink-800">'+TH_M[CUR.getMonth()]+' '+(CUR.getFullYear()+543)+'</h2>'+
+    '<button onclick="changeMonth(1)" class="px-3 py-1 bg-pink-100 text-pink-700 rounded-lg font-bold">▶</button></div>';
+}
+function legend(){
+  var h='<div class="flex flex-wrap gap-2 mb-3 text-[11px]">';
+  for(var i=0;i<POS.length;i++)
+    h+='<span class="flex items-center gap-1"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:'+POS[i].dot+'"></span>'+POS[i].c+' '+POS[i].l+'</span>';
+  return h+'</div>';
+}
+
+/* ============ 1. อัตรากำลัง ============ */
+function vPower(){
+  var y=CUR.getFullYear(), m=CUR.getMonth();
+  var first=new Date(y,m,1).getDay(), last=new Date(y,m+1,0).getDate(), cells='';
+  for(var i=0;i<first;i++) cells+='<div></div>';
+  for(var d=1; d<=last; d++){
+    var key=ymd(new Date(y,m,d)), bars='';
+    for(var s=0;s<SHIFT.length;s++){
+      var n=listOf(key,SHIFT[s].c).length;
+      var warn=(n<12)?' ⚠':'';
+      bars+='<div class="text-[11px] rounded px-1 my-0.5 '+SHIFT[s].bg+' '+SHIFT[s].tx+' font-semibold">'+SHIFT[s].ab+n+warn+'</div>';
+    }
+    var nt='';
+    for(var q=0;q<SHIFT.length;q++) if(noteOf(key,SHIFT[q].c)) nt='<div class="text-[10px] text-amber-600">📝</div>';
+    cells+='<div onclick="selectDay(\''+key+'\')" class="border border-pink-100 rounded-lg p-1 cursor-pointer hover:bg-pink-50 min-h-[80px]">'+
+      '<div class="text-xs font-bold text-pink-700">'+d+'</div>'+bars+nt+'</div>';
+  }
+  var head=''; for(var k=0;k<7;k++) head+='<div>'+TH_D[k]+'</div>';
+  return monthNav()+'<div class="grid grid-cols-7 gap-1 text-center text-xs font-bold text-pink-500 mb-1">'+head+'</div>'+
+    '<div class="grid grid-cols-7 gap-1">'+cells+'</div>'+
+    '<p class="text-xs text-slate-400 mt-3">ตัวเลข = จำนวนคนในผลัดนั้น · ⚠ = น้อยกว่า 12 คน · 📝 = มีหมายเหตุ · แตะวันเพื่อดูตำแหน่งรายวัน</p>';
+}
+
+/* ============ 2. ตำแหน่งรายวัน ============ */
+function vDaily(){
+  var cards='';
+  for(var s=0;s<SHIFT.length;s++){
+    var sh=SHIFT[s], arr=listOf(SEL,sh.c), rows='';
+    var used={};
+    for(var i=0;i<arr.length;i++){ var r0=roleOf(SEL,sh.c,arr[i]); if(r0) used[r0]=(used[r0]||0)+1; }
+    for(var i=0;i<arr.length;i++){
+      var id=arr[i], r=roleOf(SEL,sh.c,id), st=staffOf(id);
+      if(!st) continue;
+      var caps=st.caps||[];
+      var cell='';
+      if(canAssign()){
+        var o='<option value="">— รอระบุตำแหน่ง —</option>';
+        for(var p=0;p<POS.length;p++){
+          var pc = POS[p].c;
+          if(caps.indexOf(pc)<0) continue;
+          if(pc==='LAN' && used['LAN'] && r!=='LAN') continue;
+          if(pc==='MAN' && (used['MAN']||0)>=2 && r!=='MAN') continue;
+          o+='<option value="'+pc+'"'+(r===pc?' selected':'')+'>'+pc+' · '+POS[p].l+'</option>';
+        }
+        cell='<select onchange="setRole(\''+sh.c+'\','+id+',this.value)" class="text-xs border border-pink-300 rounded-lg px-2 py-1 bg-white">'+o+'</select>';
+      }else{
+        cell = r ? '<span class="chip '+posOf(r).chip+'">'+r+'</span> <span class="text-xs text-slate-500">'+posOf(r).l+'</span>'
+                 : '<span class="text-xs text-slate-400 italic">รอระบุตำแหน่ง</span>';
+      }
+      var ot=otOf(SEL,sh.c,id);
+      var otTag = ot==='ot' ? '<span class="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded ml-1">OT</span>' : '';
+      var remBtn = canAssign() ? '<button onclick="removeDailyStaff(\''+sh.c+'\','+id+')" class="text-rose-400 font-bold ml-1 px-1">✕</button>' : '';
+      rows+='<div class="flex items-center justify-between gap-2 py-1.5 border-b border-pink-100 last:border-0">'+
+        '<span class="text-sm '+(id===ME?'font-bold text-pink-700':'')+'">'+st.name+otTag+remBtn+'</span>'+cell+'</div>';
+    }
+
+    var addStaffHtml = '';
+    if(canAssign()){
+      var stOpts='<option value="">+ เพิ่มชื่อบุคลากรลงในเวรนี้</option>';
+      for(var si=0; si<DB.staff.length; si++){
+        if(arr.indexOf(DB.staff[si].id)<0){
+          stOpts+='<option value="'+DB.staff[si].id+'">'+DB.staff[si].name+'</option>';
+        }
+      }
+      addStaffHtml='<div class="mt-2 pt-2 border-t border-slate-200 flex gap-2">'+
+        '<select id="add_st_'+sh.c+'" class="text-xs border border-pink-300 rounded-lg px-2 py-1 bg-white flex-1">'+stOpts+'</select>'+
+        '<button onclick="addDailyStaff(\''+sh.c+'\')" class="bg-pink-600 text-white px-3 py-1 rounded-lg text-xs font-semibold">เพิ่ม</button></div>';
+    }
+
+    if(!arr.length && !addStaffHtml) rows='<p class="text-sm text-slate-400 py-2">ยังไม่มีคนขึ้นเวรผลัดนี้</p>';
+
+    var miss='';
+    for(var p2=0;p2<POS.length;p2++){
+      var code2 = POS[p2].c;
+      if((code2==='MN'||code2==='LAN'||code2==='LR'||code2==='LU'||code2==='T') && !used[code2]) miss+=code2+' ';
+    }
+    var note=noteOf(SEL,sh.c);
+    var noteBox='<div class="mt-2 border border-amber-200 bg-amber-50 rounded-xl p-2">'+
+      '<div class="text-xs font-bold text-amber-800 mb-1">📝 หมายเหตุเวร'+sh.l+'</div>'+
+      (ROLE==='admin'
+        ? '<textarea id="nt_'+sh.c+'" rows="2" class="w-full border border-amber-200 rounded-lg p-2 text-xs">'+note+'</textarea>'+
+          '<button onclick="saveNote(\''+sh.c+'\')" class="mt-1 bg-amber-500 text-white px-3 py-1 rounded-lg text-xs font-semibold">บันทึก</button>'
+        : (note?'<p class="text-xs whitespace-pre-wrap">'+note+'</p>':'<p class="text-xs text-slate-400">ไม่มีหมายเหตุ</p>'))+'</div>';
+
+    cards+='<div class="border '+sh.bd+' '+sh.bg+' rounded-2xl p-4">'+
+      '<div class="flex justify-between items-center"><h3 class="font-bold '+sh.tx+'">'+sh.icon+' '+sh.l+'</h3>'+
+      '<span class="text-xs text-slate-500">'+sh.t+'</span></div>'+
+      '<div class="flex justify-between items-center mt-1 mb-2"><span class="semibold '+sh.tx+'">รวม '+arr.length+' คน</span>'+
+      (miss?'<span class="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">ยังขาด: '+miss+'</span>':'<span class="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✓ ครบถ้วน</span>')+'</div>'+
+      '<div class="bg-white/80 rounded-xl p-2">'+rows+addStaffHtml+'</div>'+noteBox+'</div>';
+  }
+  var tip = canAssign()
+    ? '<span class="text-xs bg-blue-900 text-white px-2 py-1 rounded-full">คุณระบุและเพิ่มชื่อได้</span>'
+    : '<span class="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full">โหมดอ่านอย่างเดียว</span>';
+  return '<div class="flex items-center gap-3 mb-4 flex-wrap no-print">'+
+    '<input type="date" value="'+SEL+'" onchange="setSel(this.value)" class="border border-pink-200 rounded-lg px-3 py-2">'+
+    '<h2 class="font-bold text-pink-800">'+thDate(SEL)+'</h2>'+tip+'</div>'+
+    legend()+'<div class="grid md:grid-cols-3 gap-4">'+cards+'</div>';
+}
+function addDailyStaff(sc){
+  var selId = document.getElementById('add_st_'+sc).value;
+  if(!selId) { toast('กรุณาเลือกชื่อบุคลากร', true); return; }
+  var id = +selId;
+  if(!DB.assign[SEL]) DB.assign[SEL]={M:[],A:[],N:[]};
+  if(!DB.assign[SEL][sc]) DB.assign[SEL][sc]=[];
+  if(DB.assign[SEL][sc].indexOf(id)>=0){ toast('คนนี้มีเวรในผลัดนี้อยู่แล้ว', true); return; }
+  DB.assign[SEL][sc].push(id);
+  save(); toast('เพิ่มชื่อเข้าเวรเรียบร้อย'); render();
+}
+function removeDailyStaff(sc, id){
+  if(!DB.assign[SEL] || !DB.assign[SEL][sc]) return;
+  DB.assign[SEL][sc] = DB.assign[SEL][sc].filter(function(x){ return x!==id; });
+  if(DB.roles[SEL] && DB.roles[SEL][sc]) delete DB.roles[SEL][sc][id];
+  save(); toast('นำชื่อออกจากเวรแล้ว'); render();
+}
+function saveNote(sc){
+  if(!DB.notes[SEL]) DB.notes[SEL]={};
+  DB.notes[SEL][sc]=document.getElementById('nt_'+sc).value;
+  save(); toast('บันทึกหมายเหตุแล้ว'); render();
+}
+
+/* ============ 3. ตารางเวรรายเดือน (คลิกสลับเวรสดแบบรองรับ ชบ / ดบ ในแถว OT) ============ */
+function vMonth(){
+  var y=CUR.getFullYear(), m=CUR.getMonth(), last=new Date(y,m+1,0).getDate();
+  var thDays='';
+  for(var d=1; d<=last; d++){
+    var dow=new Date(y,m,d).getDay(), wk=(dow===0||dow===6);
+    thDays+='<th class="border border-slate-300 text-xs px-1 py-1 '+(wk?'text-rose-600 bg-rose-50':'text-slate-700 bg-slate-50')+'">'+d+'</th>';
+  }
+
+  var body='';
+  for(var i=0;i<DB.staff.length;i++){
+    var st=DB.staff[i];
+    var daysWork=0, daysHoli=0, totOT=0;
+    var rowWork='', rowOT='';
+
+    for(var d2=1; d2<=last; d2++){
+      var key=ymd(new Date(y,m,d2));
+      var dayObj=DB.assign[key]||{};
+      var workShifts = [], otShifts = [];
+
+      for(var s=0;s<SHIFT.length;s++){
+        var sc=SHIFT[s].c;
+        if((dayObj[sc]||[]).indexOf(st.id)>=0){
+          var ot=otOf(key,sc,st.id);
+          if(ot==='ot') otShifts.push(sc);
+          else workShifts.push(sc);
+        }
+      }
+
+      var dw=new Date(y,m,d2).getDay();
+      var isWk=(dw===0||dw===6);
+      var cellBg=isWk?'bg-rose-50/40':'';
+      
+      if(workShifts.length>0) daysWork++; else daysHoli++;
+      
+      // คำนวณจำนวนเวร OT (ชบ หรือ ดบ นับเป็น 2 เวร)
+      if(otShifts.length>0) totOT += otShifts.length;
+
+      // แปลงผลัดเป็นตัวอักษรไทย (M->ช, A->บ, N->ด)
+      var mapAbbr={M:'ช', A:'บ', N:'ด'};
+      var workTxt = workShifts.map(function(s){ return mapAbbr[s]; }).join('');
+      var otTxt = '';
+      if(otShifts.length===2){
+        // ตรวจสอบว่าเป็น ชบ หรือ ดบ
+        if(otShifts.indexOf('M')>=0 && otShifts.indexOf('A')>=0) otTxt='ชบ';
+        else if(otShifts.indexOf('N')>=0 && otShifts.indexOf('A')>=0) otTxt='ดบ';
+        else otTxt = otShifts.map(function(s){ return mapAbbr[s]; }).join('');
+      } else if(otShifts.length===1){
+        otTxt = mapAbbr[otShifts[0]];
+      }
+
+      if(ROLE==='admin'){
+        var clickWork = 'onclick="adminCycleCell(\''+key+'\', '+st.id+', \'work\')"';
+        var clickOT = 'onclick="adminCycleCell(\''+key+'\', '+st.id+', \'ot\')"';
+        
+        var wDis = workTxt || '<span class="text-slate-300">x</span>';
+        var oDis = otTxt || '';
+
+        rowWork+='<td '+clickWork+' class="border border-slate-200 text-center text-xs '+cellBg+' cursor-pointer hover:bg-pink-100 select-none py-1.5">'+wDis+'</td>';
+        rowOT+='<td '+clickOT+' class="border border-slate-200 text-center text-xs '+cellBg+' text-violet-700 font-semibold cursor-pointer hover:bg-violet-100 select-none py-1.5">'+oDis+'</td>';
+      } else {
+        rowWork+='<td class="border border-slate-200 text-center text-xs '+cellBg+' py-1.5">'+(workTxt||'<span class="text-slate-300">x</span>')+'</td>';
+        rowOT+='<td class="border border-slate-200 text-center text-xs '+cellBg+' text-violet-700 font-semibold py-1.5">'+(otTxt||'')+'</td>';
+      }
+    }
+
+    body+='<tr class="hover:bg-pink-50/30">'+
+      '<td rowspan="2" class="sticky-l border border-slate-300 px-2 py-2 text-xs font-semibold whitespace-nowrap bg-white">'+st.name+'</td>'+
+      '<td class="border border-slate-300 text-xs px-2 py-1 bg-slate-50 font-medium">ปกติ</td>'+
+      rowWork+
+      '<td class="border border-slate-300 text-center text-xs font-bold">'+daysWork+'</td>'+
+      '<td class="border border-slate-300 text-center text-xs text-slate-500">'+daysHoli+'</td>'+
+      '<td rowspan="2" class="border border-slate-300 text-center text-xs font-bold text-violet-700 bg-violet-50/40">'+(totOT||'')+'</td></tr>'+
+      '<tr class="hover:bg-pink-50/30 border-b-2 border-slate-300">'+
+      '<td class="border border-slate-300 text-xs px-2 py-1 bg-slate-50 font-medium text-violet-700">OT</td>'+
+      rowOT+
+      '<td colspan="2" class="border border-slate-300 bg-slate-50"></td></tr>';
+  }
+
+  var imp='';
+  if(ROLE==='admin'){
+    imp='<div class="border border-emerald-200 bg-emerald-50/60 rounded-2xl p-4 mb-4 no-print">'+
+      '<h3 class="font-bold text-emerald-700 mb-1">📊 นำเข้าตารางเวรจากไฟล์ Excel หรือคลิกจัดสดในตาราง</h3>'+
+      '<p class="text-xs text-slate-500 mb-2">อัปโหลดไฟล์ หรือ <b>คลิกช่องแถวปกติ (วน: ช ➔ บ ➔ ด ➔ ว่าง) · คลิกช่องแถว OT (วน: ช ➔ บ ➔ ด ➔ ชบ ➔ ดบ ➔ ว่าง)</b> ได้ทันที</p>'+
+      '<input type="file" id="xlsFile" accept=".xlsx,.xls" class="text-xs mb-2 w-full border border-emerald-200 rounded-xl p-2 bg-white">'+
+      '<div class="flex gap-2 flex-wrap"><button onclick="importSchedule()" class="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-semibold">นำเข้าตารางเดือนนี้</button>'+
+      '<button onclick="clearMonth()" class="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-semibold">ล้างตารางเดือนนี้</button></div>'+
+      '<p id="impLog" class="text-xs text-slate-500 mt-2"></p></div>';
+  }
+
+  return imp+monthNav()+
+    '<div class="flex justify-between items-center mb-2 no-print"><span class="text-xs text-slate-500">x = วันหยุด · แถวปกติ (ช/บ/ด) · แถว OT (ช/บ/ด/ชบ/ดบ)'+(ROLE==='admin'?' · <b>(ผู้ดูแล: คลิกที่ช่องเพื่อสลับเวรได้ทันที)</b>':'' )+'</span>'+
+    '<button onclick="window.print()" class="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-semibold">🖨 พิมพ์ / PDF</button></div>'+
+    '<div class="ovwrap border border-slate-300 rounded-xl"><table class="border-collapse text-xs w-full bg-white"><thead>'+
+    '<tr><th rowspan="2" class="sticky-l border border-slate-300 px-2 py-2 text-center bg-slate-100 min-w-[140px]">ชื่อ - สกุล</th>'+
+    '<th rowspan="2" class="border border-slate-300 text-center px-2 bg-slate-100">ผลัดงาน</th>'+
+    '<th colspan="'+last+'" class="border border-slate-300 text-center py-1 bg-slate-100 font-bold">วันที่</th>'+
+    '<th colspan="2" class="border border-slate-300 text-center bg-slate-100">วันทำ</th>'+
+    '<th rowspan="2" class="border border-slate-300 text-center px-2 bg-slate-100">OT</th></tr>'+
+    '<tr>'+thDays+'<th class="border border-slate-300 text-center text-xs bg-slate-100">การ</th><th class="border border-slate-300 text-center text-xs bg-slate-100">หยุด</th></tr>'+
+    '</thead><tbody>'+body+'</tbody></table></div>';
+}
+
+// ฟังก์ชันคลิกสลับเวรสด รองรับแถวปกติและแถว OT (รวม ชบ และ ดบ)
+function adminCycleCell(dateStr, staffId, rowType){
+  if(!DB.assign[dateStr]) DB.assign[dateStr]={M:[],A:[],N:[]};
+
+  // ดึงสถานะปัจจุบันของคนนี้ในวันนี้
+  var curShifts = [];
+  ['M','A','N'].forEach(function(sc){
+    if((DB.assign[dateStr][sc]||[]).indexOf(staffId)>=0){
+      var ot = otOf(dateStr, sc, staffId);
+      if((rowType==='ot' && ot==='ot') || (rowType==='work' && ot!=='ot')){
+        curShifts.push(sc);
+      }
+    }
+  });
+
+  // ลบค่าเดิมในประเภทนั้นออกก่อน
+  ['M','A','N'].forEach(function(sc){
+    if(DB.assign[dateStr][sc]){
+      DB.assign[dateStr][sc] = DB.assign[dateStr][sc].filter(function(x){ return x!==staffId; });
+    }
+    if(DB.otype[dateStr] && DB.otype[dateStr][sc]) delete DB.otype[dateStr][sc][staffId];
+  });
+
+  // ลำดับการวนสลับ
+  var nextSet = [];
+  if(rowType==='work'){
+    if(curShifts.length===0) nextSet=['M'];
+    else if(curShifts.indexOf('M')>=0) nextSet=['A'];
+    else if(curShifts.indexOf('A')>=0) nextSet=['N'];
+    else nextSet=[];
+  } else {
+    // แถว OT วน: ว่าง -> ช -> บ -> ด -> ชบ(M+A) -> ดบ(N+A) -> ว่าง
+    if(curShifts.length===0) nextSet=['M'];
+    else if(curShifts.length===1 && curShifts[0]==='M') nextSet=['A'];
+    else if(curShifts.length===1 && curShifts[0]==='A') nextSet=['N'];
+    else if(curShifts.length===1 && curShifts[0]==='N') nextSet=['M','A']; // ชบ
+    else if(curShifts.length===2 && curShifts.indexOf('M')>=0) nextSet=['N','A']; // ดบ
+    else nextSet=[];
+  }
+
+  if(nextSet.length>0){
+    for(var i=0; i<nextSet.length; i++){
+      var sc = nextSet[i];
+      if(!DB.assign[dateStr][sc]) DB.assign[dateStr][sc]=[];
+      DB.assign[dateStr][sc].push(staffId);
+      setOT(dateStr, sc, staffId, (rowType==='ot'?'ot':'work'));
+    }
+    toast('ตั้งค่าเวรสำเร็จ');
+  } else {
+    toast('ลบเวรออกแล้ว');
+  }
+  save(); render();
+}
+
+function clearMonth(){
+  var y=CUR.getFullYear(), m=CUR.getMonth(), last=new Date(y,m+1,0).getDate();
+  for(var d=1; d<=last; d++){
+    var key=ymd(new Date(y,m,d));
+    DB.assign[key]={M:[],A:[],N:[]};
+    delete DB.roles[key];
+    delete DB.otype[key];
+  }
+  save(); toast('ล้างตารางเดือนนี้แล้ว'); render();
+}
+function parseCell(v){
+  if(v===null||v===undefined) return [];
+  var s=(''+v).trim(), out=[];
+  var su=s.toUpperCase();
+  if(!s||s==='-'||s==='0') return [];
+  if(su.indexOf('ช')>=0||su.indexOf('M')>=0||su.indexOf('เช้า')>=0) out.push('M');
+  if(su.indexOf('บ')>=0||su.indexOf('A')>=0||su.indexOf('บ่าย')>=0) out.push('A');
+  if(su.indexOf('ด')>=0||su.indexOf('N')>=0||su.indexOf('ดึก')>=0) out.push('N');
+  if(s==='Vac'||s==='น'||s==='อ') out.push('M');
+  return (out.length ? out : ['M']);
+}
+function importSchedule(){
+  var f=document.getElementById('xlsFile');
+  if(!f||!f.files.length){ toast('เลือกไฟล์ก่อน',true); return; }
+  var r=new FileReader();
+  r.onload=function(e){
+    try{
+      var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      var sh=wb.Sheets[wb.SheetNames[0]];
+      var js=XLSX.utils.sheet_to_json(sh,{header:1,defval:''});
+      var hdr=-1, map={};
+      for(var i=0;i<js.length && i<15;i++){
+        var cnt=0, mm={};
+        for(var c=1;c<js[i].length;c++){
+          var v=(''+js[i][c]).trim();
+          if(/^\d{1,2}$/.test(v)){ var dnum=+v; if(dnum>=1&&dnum<=31){ mm[c]=dnum; cnt++; } }
+        }
+        if(cnt>=5){ hdr=i; map=mm; break; }
+      }
+      if(hdr<0){ toast('ไม่พบแถวหัวตารางวันที่',true); return; }
+      var y=CUR.getFullYear(), m=CUR.getMonth(), last=new Date(y,m+1,0).getDate();
+      for(var d=1; d<=last; d++){ var k=ymd(new Date(y,m,d)); DB.assign[k]={M:[],A:[],N:[]}; }
+      var added=0, newPeople=0, mx=0;
+      var allCaps=POS.map(function(p){ return p.c; });
+      for(var q=0;q<DB.staff.length;q++) if(DB.staff[q].id>mx) mx=DB.staff[q].id;
+      for(var row=hdr+1; row<js.length; row++){
+        var nm=(''+(js[row][0]||'')).trim();
+        if(!nm) continue;
+        var sid=null;
+        for(var w=0;w<DB.staff.length;w++) if(DB.staff[w].name===nm) sid=DB.staff[w].id;
+        if(!sid){ mx++; sid=mx; DB.staff.push({id:sid,name:nm,level:'RN',caps:allCaps}); newPeople++; }
+        for(var col in map){
+          var dnum2=map[col];
+          if(dnum2>last) continue;
+          var cellVal=(''+js[row][col]).trim();
+          var codes=parseCell(cellVal);
+          if(!codes.length) continue;
+          var key2=ymd(new Date(y,m,dnum2));
+          for(var z=0;z<codes.length;z++){
+            var sc=codes[z];
+            if(DB.assign[key2][sc].indexOf(sid)<0){
+              DB.assign[key2][sc].push(sid);
+              added++;
+              if(cellVal==='Vac'||cellVal==='น'||cellVal==='อ'){
+                if(!DB.roles[key2]) DB.roles[key2]={};
+                if(!DB.roles[key2][sc]) DB.roles[key2][sc]={};
+                DB.roles[key2][sc][sid]=cellVal;
+              }
+            }
+          }
+        }
+      }
+      save(); drawWho(); render();
+      var el=document.getElementById('impLog');
+      if(el) el.textContent='นำเข้าสำเร็จ · เพิ่มเวร '+added+' รายการ · พบชื่อใหม่ '+newPeople+' คน';
+      toast('นำเข้าตารางสำเร็จ '+added+' เวร');
+    }catch(err){ toast('อ่านไฟล์ไม่สำเร็จ ตรวจรูปแบบไฟล์',true); }
+  };
+  r.readAsArrayBuffer(f.files[0]);
+}
+
+/* ============ 4. ตารางเวรรายบุคคล ============ */
+function setViewId(v){ VIEWID=+v; render(); }
+function setMeMode(m){ MEMODE=m; render(); }
+function vPerson(){
+  if(ROLE==='admin' && MEMODE==='sum') return vOTSummary();
+  var tid = (ROLE==='admin') ? (VIEWID||DB.staff[0].id) : ME;
+  var y=CUR.getFullYear(), m=CUR.getMonth(), days=new Date(y,m+1,0).getDate();
+  var cM=0,cA=0,cN=0,cOT=0,pst={},mine={},list=[];
+  for(var d=1; d<=days; d++){
+    var key=ymd(new Date(y,m,d));
+    for(var s=0;s<SHIFT.length;s++){
+      if(listOf(key,SHIFT[s].c).indexOf(tid)>=0){
+        var r=roleOf(key,SHIFT[s].c,tid), ot=otOf(key,SHIFT[s].c,tid);
+        if(!mine[key]) mine[key]=[];
+        mine[key].push({sc:SHIFT[s].c,r:r,ot:ot});
+        list.push({d:key,s:SHIFT[s],r:r,ot:ot});
+        if(SHIFT[s].c==='M')cM++; if(SHIFT[s].c==='A')cA++; if(SHIFT[s].c==='N')cN++;
+        if(ot==='ot') cOT++;
+        if(r) pst[r]=(pst[r]||0)+1;
+      }
+    }
+  }
+  var first=new Date(y,m,1).getDay(), cells='';
+  for(var i=0;i<first;i++) cells+='<div></div>';
+  for(var d2=1; d2<=days; d2++){
+    var key2=ymd(new Date(y,m,d2)), its=mine[key2]||[], badge='';
+    for(var j=0;j<its.length;j++){
+      var cls=its[j].r?posOf(its[j].r).bgc:'bg-slate-400 text-white';
+      badge+='<div class="mt-1 rounded px-1 py-0.5 text-[11px] font-bold '+cls+'">'+shOf(its[j].sc).ab+(its[j].r||'?')+(its[j].ot==='ot'?'*':'')+'</div>';
+    }
+    var dw=new Date(y,m,d2).getDay();
+    cells+='<div class="border border-pink-100 rounded-lg p-1 min-h-[74px] '+((dw===0||dw===6)?'bg-rose-50/40':'')+'">'+
+      '<div class="text-xs font-bold '+((dw===0||dw===6)?'text-rose-500':'text-slate-600')+'">'+d2+'</div>'+badge+'</div>';
+  }
+  var head=''; for(var k=0;k<7;k++) head+='<div>'+TH_D[k]+'</div>';
+  var sb='';
+  for(var kk in pst) sb+='<span class="bg-pink-100 text-pink-800 text-xs px-3 py-1 rounded-full font-semibold">'+posOf(kk).l+': '+pst[kk]+'</span> ';
+
+  var myMissions = [];
+  for(var mi=0; mi<DB.missions.length; mi++){
+    var ms = DB.missions[mi];
+    if(ms.staffId === tid) myMissions.push(ms);
+  }
+  var missHtml = '';
+  for(var mi2=0; mi2<myMissions.length; mi2++){
+    var mitem = myMissions[mi2];
+    missHtml += '<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-2 text-sm flex justify-between items-center">'+
+      '<div><b class="text-amber-800">🎯 '+mitem.title+'</b><div class="text-xs text-slate-500">ช่วงวันที่: '+thDate(mitem.start)+' ถึง '+thDate(mitem.end)+'</div></div>'+
+      (ROLE==='admin'?'<button onclick="delMission('+mitem.id+')" class="text-rose-500 text-xs px-2 py-1 bg-white rounded border border-rose-200">ลบ</button>':'')+
+      '</div>';
+  }
+
+  var rows='';
+  for(var r2=0;r2<list.length;r2++){
+    var it=list[r2];
+    var roleTxt = it.r ? '<span class="chip '+posOf(it.r).chip+'">'+it.r+'</span> '+posOf(it.r).l : '<span class="text-xs text-slate-400 italic">รอระบุตำแหน่ง</span>';
+    var canEditOT = (ROLE==='admin' || tid===ME);
+    var otCell;
+    if(canEditOT){
+      otCell='<select onchange="setOT(\''+it.d+'\',\''+it.s.c+'\','+tid+',this.value);render();" class="text-xs border border-pink-200 rounded-lg px-2 py-1 bg-white">'+
+        '<option value="work"'+(it.ot==='work'?' selected':'')+'>เวรทำการ</option>'+
+        '<option value="ot"'+(it.ot==='ot'?' selected':'')+'>OT</option></select>';
+    }else{
+      otCell = it.ot==='ot' ? '<span class="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-semibold">OT</span>'
+                            : '<span class="text-xs text-slate-500">เวรทำการ</span>';
+    }
+    rows+='<tr class="border-b border-pink-100"><td class="py-2 text-sm">'+thDate(it.d)+'</td>'+
+      '<td><span class="px-2 py-0.5 rounded '+it.s.bg+' '+it.s.tx+' text-xs font-semibold">'+it.s.icon+' '+it.s.l+'</span></td>'+
+      '<td class="text-sm">'+roleTxt+'</td><td class="text-right">'+otCell+'</td></tr>';
+  }
+  if(!rows) rows='<tr><td colspan="4" class="text-center text-slate-400 py-4">ไม่มีเวรในเดือนนี้</td></tr>';
+
+  var picker='';
+  if(ROLE==='admin'){
+    var o='';
+    for(var p=0;p<DB.staff.length;p++) o+='<option value="'+DB.staff[p].id+'"'+(DB.staff[p].id===tid?' selected':'')+'>'+DB.staff[p].name+'</option>';
+    picker='<div class="flex items-center gap-2"><span class="text-sm font-semibold">เลือกชื่อ</span>'+
+      '<select onchange="setViewId(this.value)" class="border border-pink-200 rounded-lg px-3 py-1.5 text-sm">'+o+'</select>'+
+      '<button onclick="setMeMode(\'sum\')" class="text-xs bg-violet-600 text-white px-3 py-1.5 rounded-lg font-semibold">สรุป OT ทั้งหน่วย</button></div>';
+  }else{
+    picker='<div class="font-bold text-pink-800">ตารางของ '+nameOf(tid)+'</div>';
+  }
+  return '<div class="flex items-center justify-between mb-4 flex-wrap gap-2 no-print">'+picker+
+    '<div class="flex items-center gap-2"><button onclick="changeMonth(-1)" class="px-3 py-1 bg-pink-100 text-pink-700 rounded-lg text-sm font-bold">◀</button>'+
+    '<span class="font-bold text-sm text-pink-800">'+TH_M[m]+' '+(y+543)+'</span>'+
+    '<button onclick="changeMonth(1)" class="px-3 py-1 bg-pink-100 text-pink-700 rounded-lg text-sm font-bold">▶</button></div>'+
+    '<button onclick="window.print()" class="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-semibold">🖨 พิมพ์ / PDF</button></div>'+
+    '<h2 class="font-bold text-pink-800 mb-2 hidden print:block">ตารางเวร '+nameOf(tid)+' · '+TH_M[m]+' '+(y+543)+'</h2>'+
+    '<div class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 text-center">'+
+    '<div class="border border-rose-100 bg-rose-50 rounded-2xl p-3"><div class="text-2xl font-bold text-rose-700">'+cM+'</div><div class="text-xs text-slate-500">🌅 เช้า</div></div>'+
+    '<div class="border border-fuchsia-100 bg-fuchsia-50 rounded-2xl p-3"><div class="text-2xl font-bold text-fuchsia-700">'+cA+'</div><div class="text-xs text-slate-500">🌆 บ่าย</div></div>'+
+    '<div class="border border-pink-100 bg-pink-50 rounded-2xl p-3"><div class="text-2xl font-bold text-pink-700">'+cN+'</div><div class="text-xs text-slate-500">🌙 ดึก</div></div>'+
+    '<div class="border border-violet-100 bg-violet-50 rounded-2xl p-3"><div class="text-2xl font-bold text-violet-700">'+cOT+'</div><div class="text-xs text-slate-500">⏱ OT</div></div>'+
+    '<div class="border border-indigo-100 bg-indigo-50 rounded-2xl p-3"><div class="text-2xl font-bold text-indigo-700">'+(cM+cA+cN)+'</div><div class="text-xs text-slate-500">รวม</div></div></div>'+
+    (missHtml?'<h3 class="font-semibold text-amber-800 text-sm mb-2">🎯 ภารกิจพิเศษประจำตัว</h3>'+missHtml:'')+
+    '<div class="grid grid-cols-7 gap-1 text-center text-xs font-bold text-pink-500 mb-1">'+head+'</div>'+
+    '<div class="grid grid-cols-7 gap-1 mb-5">'+cells+'</div>'+
+    '<h3 class="font-semibold text-pink-800 text-sm mb-2">📊 สถิติตำแหน่ง</h3>'+
+    '<div class="flex flex-wrap gap-2 mb-5">'+(sb||'<span class="text-xs text-slate-400">ยังไม่ได้ระบุตำแหน่ง</span>')+'</div>'+
+    '<h3 class="font-semibold text-pink-800 text-sm mb-2">📋 รายการเวร</h3>'+
+    '<table class="w-full"><thead><tr class="bg-pink-100 text-xs text-pink-800"><th class="text-left py-2 px-2">วันที่</th><th class="text-left">ผลัด</th><th class="text-left">ตำแหน่ง</th><th class="text-right px-2">ประเภท</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+function vOTSummary(){
+  var y=CUR.getFullYear(), m=CUR.getMonth(), days=new Date(y,m+1,0).getDate();
+  var rows='', gw=0, go=0;
+  for(var i=0;i<DB.staff.length;i++){
+    var st=DB.staff[i], w=0, o=0;
+    for(var d=1; d<=days; d++){
+      var key=ymd(new Date(y,m,d));
+      for(var s=0;s<SHIFT.length;s++){
+        if(listOf(key,SHIFT[s].c).indexOf(st.id)>=0){
+          if(otOf(key,SHIFT[s].c,st.id)==='ot') o++; else w++;
+        }
+      }
+    }
+    gw+=w; go+=o;
+    rows+='<tr class="border-b border-pink-100"><td class="py-1.5 px-2">'+st.name+'</td>'+
+      '<td class="text-center">'+w+'</td><td class="text-center font-bold text-violet-700">'+o+'</td>'+
+      '<td class="text-center font-bold text-pink-700">'+(w+o)+'</td></tr>';
+  }
+  return '<div class="flex items-center justify-between mb-4 flex-wrap gap-2 no-print">'+
+    '<button onclick="setMeMode(\'person\')" class="bg-slate-200 px-3 py-1.5 rounded-lg text-sm font-semibold">← กลับรายบุคคล</button>'+
+    '<div class="flex items-center gap-2"><button onclick="changeMonth(-1)" class="px-3 py-1 bg-pink-100 text-pink-700 rounded-lg text-sm font-bold">◀</button>'+
+    '<span class="font-bold text-sm text-pink-800">'+TH_M[m]+' '+(y+543)+'</span>'+
+    '<button onclick="changeMonth(1)" class="px-3 py-1 bg-pink-100 text-pink-700 rounded-lg text-sm font-bold">▶</button></div>'+
+    '<button onclick="window.print()" class="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-semibold">🖨 พิมพ์ / PDF</button></div>'+
+    '<h2 class="font-bold text-lg text-pink-800 mb-3">⏱ สรุปเวรทำการ / OT · '+TH_M[m]+' '+(y+543)+'</h2>'+
+    '<table class="w-full text-sm"><thead><tr class="bg-pink-100 text-xs text-pink-800"><th class="text-left py-2 px-2">ชื่อ</th><th>เวรทำการ</th><th>OT</th><th>รวม</th></tr></thead>'+
+    '<tbody>'+rows+'</tbody><tfoot><tr class="bg-pink-50 font-bold"><td class="py-2 px-2">รวมทั้งหน่วย</td>'+
+    '<td class="text-center">'+gw+'</td><td class="text-center text-violet-700">'+go+'</td><td class="text-center text-pink-700">'+(gw+go)+'</td></tr></tfoot></table>';
+}
+
+/* ============ หน้าภารกิจพิเศษ ============ */
+function vMission(){
+  var stOpts='';
+  for(var i=0;i<DB.staff.length;i++) stOpts+='<option value="'+DB.staff[i].id+'">'+DB.staff[i].name+'</option>';
+
+  var listHtml='';
+  for(var j=0; j<DB.missions.length; j++){
+    var m=DB.missions[j];
+    listHtml+='<tr class="border-b border-pink-100 text-sm">'+
+      '<td class="py-2 px-2 font-semibold">'+nameOf(m.staffId)+'</td>'+
+      '<td>'+thDate(m.start)+' ถึง '+thDate(m.end)+'</td>'+
+      '<td>'+m.title+'</td>'+
+      (ROLE==='admin'?'<td class="text-right"><button onclick="delMission('+m.id+')" class="text-rose-500 text-xs px-2 py-1 bg-rose-50 rounded">ลบ</button></td>':'')+'</tr>';
+  }
+
+  var formHtml = '';
+  if(ROLE==='admin'){
+    formHtml = '<div class="border border-amber-200 bg-amber-50/60 rounded-2xl p-4 mb-5">'+
+      '<h3 class="font-bold text-amber-800 mb-2">➕ บันทึกภารกิจพิเศษ</h3>'+
+      '<div class="grid md:grid-cols-3 gap-3 mb-3">'+
+      '<div><label class="text-xs font-semibold">บุคลากร</label><select id="msStaff" class="w-full border border-amber-200 rounded-xl px-3 py-2 text-sm bg-white">'+stOpts+'</select></div>'+
+      '<div><label class="text-xs font-semibold">ตั้งแต่วันที่</label><input id="msStart" type="date" class="w-full border border-amber-200 rounded-xl px-3 py-2 text-sm bg-white"></div>'+
+      '<div><label class="text-xs font-semibold">ถึงวันที่</label><input id="msEnd" type="date" class="w-full border border-amber-200 rounded-xl px-3 py-2 text-sm bg-white"></div>'+
+      '</div>'+
+      '<div class="mb-3"><label class="text-xs font-semibold">รายละเอียดภารกิจ</label>'+
+      '<input id="msTitle" class="w-full border border-amber-200 rounded-xl px-3 py-2 text-sm bg-white" placeholder="เช่น ไปราชการประชุมวิชาการ, อบรม ACLS"></div>'+
+      '<button onclick="addMission()" class="bg-amber-600 text-white px-5 py-2 rounded-xl text-sm font-semibold">บันทึกภารกิจ</button></div>';
+  }
+
+  return '<h2 class="font-bold text-lg mb-3 text-pink-800">🎯 ภารกิจพิเศษ / ไปราชการ / อบรม</h2>'+
+    formHtml+
+    '<h3 class="font-semibold text-pink-700 mb-2">รายการภารกิจทั้งหมด</h3>'+
+    '<table class="w-full text-sm"><thead><tr class="bg-pink-100 text-xs text-pink-800"><th class="text-left py-2 px-2">ชื่อ</th><th class="text-left">ช่วงวันที่</th><th class="text-left">รายละเอียดภารกิจ</th>'+(ROLE==='admin'?'<th></th>':'')+'</tr></thead>'+
+    '<tbody>'+(listHtml||'<tr><td colspan="4" class="text-center text-slate-400 py-4">ไม่มีภารกิจพิเศษ</td></tr>')+'</tbody></table>';
+}
+function addMission(){
+  var stId=+document.getElementById('msStaff').value;
+  var start=document.getElementById('msStart').value;
+  var end=document.getElementById('msEnd').value;
+  var title=document.getElementById('msTitle').value.trim();
+  if(!start||!end){ toast('กรุณาเลือกช่วงวันที่',true); return; }
+  if(!title){ toast('กรุณากรอกรายละเอียดภารกิจ',true); return; }
+  DB.missions.push({id:Date.now(), staffId:stId, start:start, end:end, title:title});
+  save(); toast('บันทึกภารกิจสำเร็จ'); render();
+}
+function delMission(id){
+  DB.missions=DB.missions.filter(function(m){ return m.id!==id; });
+  save(); toast('ลบภารกิจแล้ว'); render();
+}
+
+/* ============ 5. แลกเวร ============ */
+function vSwap(){
+  var today=ymd(new Date());
+  var mine=[];
+  var keys=Object.keys(DB.assign).sort();
+  for(var k=0;k<keys.length;k++){
+    if(keys[k]<today) continue;
+    for(var s=0;s<SHIFT.length;s++)
+      if(listOf(keys[k],SHIFT[s].c).indexOf(ME)>=0) mine.push({d:keys[k],sc:SHIFT[s].c});
+  }
+  var o1='';
+  for(var i=0;i<mine.length;i++)
+    o1+='<option value="'+mine[i].d+'|'+mine[i].sc+'">'+thDate(mine[i].d)+' · '+shOf(mine[i].sc).l+'</option>';
+  if(!o1) o1='<option value="">— ไม่มีเวรข้างหน้า —</option>';
+  var o2='';
+  for(var p=0;p<DB.staff.length;p++) if(DB.staff[p].id!==ME) o2+='<option value="'+DB.staff[p].id+'">'+DB.staff[p].name+'</option>';
+  var o3='';
+  for(var s2=0;s2<SHIFT.length;s2++) o3+='<option value="'+SHIFT[s2].c+'">'+SHIFT[s2].l+'</option>';
+
+  var logs='';
+  for(var g=DB.logs.length-1; g>=0 && g>DB.logs.length-15; g--)
+    logs+='<div class="text-xs border-b border-pink-100 py-1.5">'+DB.logs[g]+'</div>';
+
+  return '<h2 class="font-bold text-lg mb-1 text-pink-800">🔄 แลกเวร / ยก OT</h2>'+
+    '<p class="text-xs text-slate-500 mb-4">กดแลกแล้วตารางทุกหน้าจะอัปเดตทันที</p>'+
+    '<div class="grid md:grid-cols-2 gap-4">'+
+    '<div class="border border-pink-200 bg-pink-50/50 rounded-2xl p-4">'+
+    '<h3 class="font-bold text-pink-700 mb-2">⇄ สลับเวรกับเพื่อน</h3>'+
+    '<label class="text-xs font-semibold">เวรของฉัน</label>'+
+    '<select id="sw_my" class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm mb-2">'+o1+'</select>'+
+    '<label class="text-xs font-semibold">สลับกับ</label>'+
+    '<select id="sw_to" class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm mb-2">'+o2+'</select>'+
+    '<label class="text-xs font-semibold">วันเวรของอีกฝ่าย</label>'+
+    '<input id="sw_d" type="date" class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm mb-2">'+
+    '<label class="text-xs font-semibold">ผลัดของอีกฝ่าย</label>'+
+    '<select id="sw_s" class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm mb-3">'+o3+'</select>'+
+    '<button onclick="doSwap()" class="bg-pink-600 text-white px-4 py-2 rounded-xl text-sm font-semibold w-full">สลับเวรทันที</button></div>'+
+    '<div class="border border-violet-200 bg-violet-50/50 rounded-2xl p-4">'+
+    '<h3 class="font-bold text-violet-700 mb-2">🎁 ยก OT ให้เพื่อน</h3>'+
+    '<p class="text-[11px] text-slate-500 mb-2">เวรของฉันจะถูกถอดออก และเพื่อนจะได้เวรนี้เพิ่มโดยนับเป็น OT</p>'+
+    '<label class="text-xs font-semibold">เวรที่จะยกให้</label>'+
+    '<select id="gv_my" class="w-full border border-violet-200 rounded-xl px-3 py-2 text-sm mb-2">'+o1+'</select>'+
+    '<label class="text-xs font-semibold">ยกให้</label>'+
+    '<select id="gv_to" class="w-full border border-violet-200 rounded-xl px-3 py-2 text-sm mb-3">'+o2+'</select>'+
+    '<button onclick="doGive()" class="bg-violet-600 text-white px-4 py-2 rounded-xl text-sm font-semibold w-full">ยก OT ให้ทันที</button></div></div>'+
+    '<h3 class="font-semibold text-pink-800 text-sm mt-5 mb-1">🧾 ประวัติการแลกล่าสุด</h3>'+
+    (logs||'<p class="text-xs text-slate-400">ยังไม่มีประวัติ</p>');
+}
+function doSwap(){
+  var v=document.getElementById('sw_my').value;
+  if(!v){ toast('ไม่มีเวรให้แลก',true); return; }
+  var a=v.split('|'), ad=a[0], asc=a[1];
+  var to=+document.getElementById('sw_to').value;
+  var bd=document.getElementById('sw_d').value, bsc=document.getElementById('sw_s').value;
+  if(!bd){ toast('เลือกวันเวรของอีกฝ่ายก่อน',true); return; }
+  var B=listOf(bd,bsc);
+  if(B.indexOf(to)<0){ toast(nameOf(to)+' ไม่มีเวรในวัน/ผลัดที่เลือก',true); return; }
+  if(ad===bd && asc===bsc){ toast('เป็นเวรเดียวกัน',true); return; }
+  if(listOf(bd,bsc).indexOf(ME)>=0 || listOf(ad,asc).indexOf(to)>=0){ toast('สลับแล้วจะมีเวรซ้อนกัน',true); return; }
+  var A=DB.assign[ad][asc];
+  A[A.indexOf(ME)]=to;
+  B[B.indexOf(to)]=ME;
+  if(DB.roles[ad]&&DB.roles[ad][asc]) delete DB.roles[ad][asc][ME];
+  if(DB.roles[bd]&&DB.roles[bd][bsc]) delete DB.roles[bd][bsc][to];
+  DB.logs.push('⇄ '+nameOf(ME)+' ('+thDate(ad)+' '+shOf(asc).l+') สลับกับ '+nameOf(to)+' ('+thDate(bd)+' '+shOf(bsc).l+')');
+  save(); toast('สลับเวรเรียบร้อย ตารางอัปเดตแล้ว'); render();
+}
+function doGive(){
+  var v=document.getElementById('gv_my').value;
+  if(!v){ toast('ไม่มีเวรให้ยก',true); return; }
+  var a=v.split('|'), d=a[0], sc=a[1];
+  var to=+document.getElementById('gv_to').value;
+  var A=DB.assign[d][sc];
+  if(A.indexOf(to)>=0){ toast(nameOf(to)+' มีเวรผลัดนี้อยู่แล้ว',true); return; }
+  A[A.indexOf(ME)]=to;
+  if(DB.roles[d]&&DB.roles[d][sc]) delete DB.roles[d][sc][ME];
+  if(!DB.otype[d]) DB.otype[d]={};
+  if(!DB.otype[d][sc]) DB.otype[d][sc]={};
+  DB.otype[d][sc][to]='ot';
+  DB.logs.push('🎁 '+nameOf(ME)+' ยก OT '+thDate(d)+' '+shOf(sc).l+' ให้ '+nameOf(to));
+  save(); toast('ยก OT ให้ '+nameOf(to)+' เรียบร้อย'); render();
+}
+
+/* ============ 6. สถิติการขึ้นเวร ============ */
+function vStat(){
+  var y=CUR.getFullYear(), m=CUR.getMonth(), days=new Date(y,m+1,0).getDate();
+  var rows='';
+  for(var i=0;i<DB.staff.length;i++){
+    var st=DB.staff[i], cM=0,cA=0,cN=0,ot=0;
+    for(var d=1; d<=days; d++){
+      var key=ymd(new Date(y,m,d));
+      for(var s=0;s<SHIFT.length;s++){
+        if(listOf(key,SHIFT[s].c).indexOf(st.id)>=0){
+          if(SHIFT[s].c==='M')cM++; if(SHIFT[s].c==='A')cA++; if(SHIFT[s].c==='N')cN++;
+          if(otOf(key,SHIFT[s].c,st.id)==='ot') ot++;
+        }
+      }
+    }
+    rows+='<tr class="border-b border-pink-100 '+(st.id===ME?'bg-pink-50 font-semibold':'')+'">'+
+      '<td class="py-1.5 px-2">'+st.name+'</td><td class="text-center">'+cM+'</td><td class="text-center">'+cA+'</td>'+
+      '<td class="text-center">'+cN+'</td><td class="text-center text-violet-700">'+ot+'</td>'+
+      '<td class="text-center font-bold text-pink-700">'+(cM+cA+cN)+'</td></tr>';
+  }
+  return monthNav()+'<table class="w-full text-sm"><thead class="bg-pink-100 text-xs text-pink-800">'+
+    '<tr><th class="py-2 text-left px-2">ชื่อ</th><th>เช้า</th><th>บ่าย</th><th>ดึก</th><th>OT</th><th>รวม</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+
+/* ============ 7. จัดการบุคลากร (Admin) ============ */
+function vStaff(){
+  var rows='';
+  for(var i=0;i<DB.staff.length;i++){
+    var s=DB.staff[i], caps=s.caps||[];
+    var boxes='';
+    for(var p=0;p<POS.length;p++){
+      var on=caps.indexOf(POS[p].c)>=0;
+      boxes+='<button onclick="toggleCap('+s.id+',\''+POS[p].c+'\')" class="chip '+(on?POS[p].chip:'bg-slate-100 text-slate-400')+'" style="cursor:pointer">'+POS[p].c+'</button>';
+    }
+    rows+='<tr class="border-b border-pink-100 align-top">'+
+      '<td class="py-2 px-2"><input value="'+s.name+'" onchange="updName('+s.id+',this.value)" class="border border-pink-100 rounded px-2 py-1 text-sm w-36"></td>'+
+      '<td class="px-2"><select onchange="updLevel('+s.id+',this.value)" class="border border-pink-100 rounded px-1 py-1 text-xs">'+
+        '<option value="RN"'+(s.level==='RN'?' selected':'')+'>RN</option>'+
+        '<option value="PN"'+(s.level==='PN'?' selected':'')+'>PN</option>'+
+        '<option value="NA"'+(s.level==='NA'?' selected':'')+'>NA</option></select></td>'+
+      '<td class="px-2"><div class="flex flex-wrap gap-1 max-w-xs">'+boxes+'</div></td>'+
+      '<td class="text-right px-2"><button onclick="delStaff('+s.id+')" class="text-rose-500 text-xs px-2 py-1 bg-rose-50 rounded">ลบ</button></td></tr>';
+  }
+  var capOpts='';
+  for(var q=0;q<POS.length;q++)
+    capOpts+='<label class="flex items-center gap-1 text-xs bg-white border border-pink-100 rounded-lg px-2 py-1">'+
+      '<input type="checkbox" class="newcap" value="'+POS[q].c+'" checked> '+POS[q].c+' · '+POS[q].l+'</label>';
+  return '<h2 class="font-bold text-lg mb-3 text-pink-800">👥 จัดการบุคลากร</h2>'+
+    '<div class="border border-pink-200 bg-pink-50/50 rounded-2xl p-4 mb-5">'+
+    '<h3 class="font-bold text-pink-700 mb-2">➕ เพิ่มบุคลากร</h3>'+
+    '<div class="flex gap-2 flex-wrap mb-2">'+
+    '<input id="nName" class="border border-pink-200 rounded-xl px-3 py-2 text-sm flex-1 min-w-[180px]" placeholder="ชื่อ-นามสกุล">'+
+    '<select id="nLevel" class="border border-pink-200 rounded-xl px-3 py-2 text-sm"><option>RN</option><option>PN</option><option>NA</option></select></div>'+
+    '<p class="text-xs font-semibold text-slate-600 mb-1">ตำแหน่งที่ขึ้นได้ (ตามศักยภาพ)</p>'+
+    '<div class="flex flex-wrap gap-2 mb-3">'+capOpts+'</div>'+
+    '<button onclick="addNewStaff()" class="bg-pink-600 text-white px-5 py-2 rounded-xl text-sm font-semibold">บันทึกเพิ่มรายชื่อ</button></div>'+
+    '<h3 class="font-semibold text-pink-700 mb-2">รายชื่อทั้งหมด ('+DB.staff.length+' คน)</h3>'+
+    '<div class="overflow-auto"><table class="w-full text-sm"><thead><tr class="bg-pink-100 text-xs text-pink-800">'+
+    '<th class="text-left py-2 px-2">ชื่อ</th><th class="text-left">รหัส</th><th class="text-left">ตำแหน่งที่ขึ้นได้ (แตะเพื่อเปิด/ปิด)</th><th></th></tr></thead>'+
+    '<tbody>'+rows+'</tbody></table></div>'+
+    '<p class="text-xs text-slate-400 mt-3">ป้ายสี = ขึ้นตำแหน่งนั้นได้ · ป้ายเทา = ไม่ให้ขึ้น</p>';
+}
+function toggleCap(id,code){
+  for(var i=0;i<DB.staff.length;i++){
+    if(DB.staff[i].id!==id) continue;
+    var c=DB.staff[i].caps||[];
+    var k=c.indexOf(code);
+    if(k>=0) c.splice(k,1); else c.push(code);
+    DB.staff[i].caps=c;
+  }
+  save(); render();
+}
+function updName(id,v){ for(var i=0;i<DB.staff.length;i++) if(DB.staff[i].id===id) DB.staff[i].name=v.trim(); save(); drawWho(); toast('แก้ชื่อแล้ว'); }
+function updLevel(id,v){ for(var i=0;i<DB.staff.length;i++) if(DB.staff[i].id===id) DB.staff[i].level=v; save(); }
+function addNewStaff(){
+  var n=document.getElementById('nName').value.trim();
+  if(!n){ toast('กรอกชื่อก่อน',true); return; }
+  var lv=document.getElementById('nLevel').value;
+  var boxes=document.getElementsByClassName('newcap'), caps=[];
+  for(var i=0;i<boxes.length;i++) if(boxes[i].checked) caps.push(boxes[i].value);
+  var mx=0;
+  for(var j=0;j<DB.staff.length;j++) if(DB.staff[j].id>mx) mx=DB.staff[j].id;
+  DB.staff.push({id:mx+1,name:n,level:lv,caps:caps});
+  save(); drawWho(); toast('เพิ่ม '+n+' แล้ว'); render();
+}
+function delStaff(id){
+  DB.staff=DB.staff.filter(function(s){ return s.id!==id; });
+  var keys=Object.keys(DB.assign);
+  for(var k=0;k<keys.length;k++)
+    for(var s=0;s<SHIFT.length;s++){
+      var ar=DB.assign[keys[k]][SHIFT[s].c];
+      if(ar) DB.assign[keys[k]][SHIFT[s].c]=ar.filter(function(x){ return x!==id; });
+    }
+  if(ME===id) ME=DB.staff.length?DB.staff[0].id:null;
+  VIEWID=ME;
+  save(); drawWho(); toast('ลบรายชื่อแล้ว'); render();
+}
+
+document.getElementById('pin').addEventListener('keydown', function(e){ if(e.key==='Enter') doLogin(); });
+</script>
+</body>
+</html>
